@@ -121,6 +121,7 @@ function UsersTab() {
         <Button size="sm" variant="outline" onClick={async () => { await reloadFromCloud(); toast.success("Refreshed from the cloud"); }}>
           <RotateCcw className="mr-1.5 h-4 w-4" /> Refresh data
         </Button>
+        <ResetDatabaseAction />
       </div>
 
       <div className="card-soft">
@@ -467,5 +468,57 @@ function Field({ label, value, onChange, type = "text" }: { label: string; value
       <Label className="text-xs">{label}</Label>
       <Input className="h-9" type={type} value={value} onChange={(e) => onChange(e.target.value)} />
     </div>
+  );
+}
+
+function ResetDatabaseAction() {
+  const [open, setOpen] = useState(false);
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const close = () => { setOpen(false); setConfirm(""); };
+  return (
+    <>
+      <Button size="sm" variant="outline" className="text-destructive" onClick={() => setOpen(true)}>
+        <RotateCcw className="mr-1.5 h-4 w-4" /> Reset database
+      </Button>
+      <Dialog open={open} onOpenChange={(o) => (o ? setOpen(true) : close())}>
+        <DialogContent className="max-w-[480px]">
+          <DialogHeader><DialogTitle>Reset database</DialogTitle></DialogHeader>
+          <div className="space-y-3 text-sm text-muted-foreground">
+            <p>This clears all clients, leads, follow-ups, quotations, invoices, orders, tasks, targets, timeline and the activity log. Quotation and order numbering restarts.</p>
+            <p>User accounts, passwords, roles and settings are kept. Export a backup first — this cannot be undone.</p>
+            <div className="space-y-1">
+              <Label>Type RESET to confirm</Label>
+              <Input className="h-9" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="RESET" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button size="sm" variant="outline" onClick={close}>Cancel</Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={confirm.trim().toUpperCase() !== "RESET" || busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const { supabase } = await import("@/integrations/supabase/client");
+                  const { error } = await supabase.rpc("reset_crm_data");
+                  if (error) throw error;
+                  await reloadFromCloud();
+                  close();
+                  toast.success("Data cleared. Users and settings were kept.");
+                } catch (e) {
+                  toast.error(e instanceof Error ? e.message : "The reset could not be completed.");
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {busy ? "Resetting…" : "Reset data"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

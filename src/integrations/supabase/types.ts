@@ -824,6 +824,7 @@ export type Database = {
       is_active_user: { Args: never; Returns: boolean }
       is_admin: { Args: never; Returns: boolean }
       next_number: { Args: { _key: string; _prefix?: string }; Returns: string }
+      reset_crm_data: { Args: never; Returns: undefined }
     }
     Enums: {
       app_role: "super_admin" | "seller"

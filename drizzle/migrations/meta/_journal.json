@@ -8,6 +8,13 @@
       "when": 1791012544354,
       "tag": "0000_lead_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791610179857,
+      "tag": "0001_reset_crm_data",
+      "breakpoints": true
     }
   ]
 }
