@@ -27,6 +27,7 @@ export interface DataRecord {
   contactPerson: string;
   country: string;
   city: string;
+  address?: string;
   phone: string;
   whatsapp: string;
   email: string;
@@ -111,6 +112,8 @@ export interface Lead {
   priority: Priority;
   value: number;
   stage: LeadStage;
+  /** User who added the lead (owner). */
+  createdBy?: string | undefined;
   nextFollowUp: string | null;
   notes: string;
   lossReason?: string | undefined;
@@ -240,6 +243,10 @@ export interface Quotation {
   jewelryItems: JewelryItem[];
   discount: number;
   shipping: number;
+  /** Optional absolute tax amount. */
+  tax?: number;
+  /** Optional absolute other charges. */
+  otherCharges?: number;
   status: QuotationStatus;
   invoice?: Invoice | null;
   /** Linked customer record and lead — one selection fills both. */
@@ -305,6 +312,74 @@ export interface CrmState {
   leads: Lead[];
   quotations: Quotation[];
   tasks: Task[];
+  orders: Order[];
+  targets: Target[];
+  timeline: TimelineEntry[];
   activity: Activity[];
   settings: Settings;
+}
+
+/** Chronological client activity (the Client Profile timeline). */
+export interface TimelineEntry {
+  id: string;
+  clientId: string;
+  leadId?: string | undefined;
+  quotationId?: string | undefined;
+  orderId?: string | undefined;
+  type: string;
+  date: string;
+  time: string;
+  notes: string;
+  nextFollowUp: string | null;
+  assignedTo: string;
+  createdBy: string;
+  auto?: boolean;
+}
+
+export type OrderStatus =
+  | "Order Done"
+  | "Processing"
+  | "Ready"
+  | "Shipped"
+  | "Delivered"
+  | "Completed"
+  | "Cancelled";
+
+export type PaymentStatus = "Pending" | "Partial" | "Paid";
+
+export interface Order {
+  id: string;
+  orderNo: string;
+  clientId: string;
+  quotationId?: string | undefined;
+  leadId?: string | undefined;
+  orderDate: string;
+  amount: number;
+  currency: string;
+  orderStatus: OrderStatus;
+  paymentStatus: PaymentStatus;
+  amountPaid: number;
+  products: { description: string; quantity: number; total: number }[];
+  tracking: string;
+  notes: string;
+  assignedTo: string;
+  createdBy: string;
+  archived?: boolean;
+  demo?: boolean;
+}
+
+export type TargetPeriod = "Monthly" | "Quarterly" | "Yearly" | "Custom";
+
+export interface Target {
+  id: string;
+  name: string;
+  period: TargetPeriod;
+  startDate: string;
+  endDate: string;
+  currency: string;
+  amount: number;
+  assignedTo: string | null;
+  companyWide: boolean;
+  archived?: boolean;
+  demo?: boolean;
 }

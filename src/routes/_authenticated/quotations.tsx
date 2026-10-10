@@ -22,9 +22,11 @@ import {
 } from "@/lib/quotation-helpers";
 import type { Quotation, QuotationStatus, InvoiceStatus } from "@/lib/types";
 import { useQuickAdd } from "@/lib/use-quick-add";
+import { markOrderDone } from "@/lib/workflow";
+
 import { useDebounced } from "@/lib/use-debounced";
 
-export const Route = createFileRoute("/quotations")({
+export const Route = createFileRoute("/_authenticated/quotations")({
   validateSearch: (s: Record<string, unknown>): { status?: string } => ({
     ...(typeof s['status'] === "string" ? { status: s['status'] as string } : {}),
   }),
@@ -58,6 +60,25 @@ function QuotationsPage() {
   const [editor, setEditor] = useState<Quotation | null>(null);
   const [preview, setPreview] = useState<{ q: Quotation; mode: "quotation" | "invoice" } | null>(null);
   const [invoiceFor, setInvoiceFor] = useState<Quotation | null>(null);
+  const [orderFor, setOrderFor] = useState<Quotation | null>(null);
+  const [confirming, setConfirming] = useState(false);
+
+  async function confirmOrder(quote: Quotation) {
+    if (confirming) return;
+    setConfirming(true);
+    try {
+      const { order, created } = await markOrderDone(quote, quotationTotals(quote).total);
+      toast.success(
+        created ? `Order ${order.orderNo} created` : `Order ${order.orderNo} already exists`,
+      );
+      setOrderFor(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not confirm the order");
+    } finally {
+      setConfirming(false);
+    }
+  }
+
 
   useQuickAdd("quotation", () => setEditor(blankQuotation(state, user.id)));
 
@@ -267,6 +288,33 @@ function QuotationsPage() {
           onDone={(quote) => { setInvoiceFor(null); setPreview({ q: quote, mode: "invoice" }); }}
         />
       )}
+      <Dialog open={!!orderFor} onOpenChange={(v) => !v && setOrderFor(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Confirm order</DialogTitle>
+            <DialogDescription>
+              {orderFor
+                ? `This creates one order for ${orderFor.company} worth ${money(
+                    quotationTotals(orderFor).total,
+                    orderFor.currency,
+                  )}, marks the lead as Won and records it on the client timeline.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOrderFor(null)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={confirming}
+              onClick={() => orderFor && void confirmOrder(orderFor)}
+            >
+              {confirming ? "Confirming…" : "Order Done"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 
@@ -294,6 +342,8 @@ function QuotationsPage() {
           {STATUSES.filter((s) => s !== x.status).map((s) => (
             <DropdownMenuItem key={s} onSelect={() => setStatus(x, s)}>Mark as {s}</DropdownMenuItem>
           ))}
+          <DropdownMenuItem onSelect={() => setOrderFor(x)}>Order Done</DropdownMenuItem>
+
           {x.status === "Accepted" && !x.invoice && (
             <DropdownMenuItem onSelect={() => setInvoiceFor(x)}>Convert to Invoice</DropdownMenuItem>
           )}

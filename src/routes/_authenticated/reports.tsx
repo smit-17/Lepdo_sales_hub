@@ -10,7 +10,7 @@ import { useCrm, useCurrentUser, useHydrated } from "@/lib/store";
 import { money, pct, isOverdue, quotationTotals } from "@/lib/format";
 import { exportCsv, exportExcel } from "@/lib/io";
 
-export const Route = createFileRoute("/reports")({
+export const Route = createFileRoute("/_authenticated/reports")({
   head: () => ({
     meta: [
       { title: "Report & Analysis — LEPDO Sales CRM" },

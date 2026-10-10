@@ -146,7 +146,11 @@ export function QuotationDocument({
           ) : null}
           <Line label="Subtotal" value={amount(totals.subtotal, cur)} />
           <Line label="Discount" value={`- ${amount(totals.discount, cur)}`} />
-          <Line label="Shipping / other charges" value={amount(totals.shipping, cur)} />
+          <Line label="Shipping" value={amount(totals.shipping, cur)} />
+          {totals.tax ? <Line label="Tax" value={amount(totals.tax, cur)} /> : null}
+          {totals.otherCharges ? (
+            <Line label="Other charges" value={amount(totals.otherCharges, cur)} />
+          ) : null}
           <div className="flex justify-between rounded bg-[#e6f6ee] px-2 py-1.5 text-sm font-bold">
             <span>Grand total</span><span>{amount(totals.total, cur)}</span>
           </div>

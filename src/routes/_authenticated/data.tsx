@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Fragment, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Download, Upload, Link2, Plus, FileSpreadsheet, ChevronDown, ChevronUp } from "lucide-react";
@@ -36,10 +36,11 @@ import { nextFollowUpDate, timezoneLabel } from "@/lib/links";
 import { downloadTemplate, exportCsv, exportExcel, parseSpreadsheet } from "@/lib/io";
 import { fetchBusinessFromLink } from "@/lib/fetch-link.functions";
 import type { DataRecord } from "@/lib/types";
+import { moveToLead } from "@/lib/workflow";
 import { useQuickAdd } from "@/lib/use-quick-add";
 import { useDebounced } from "@/lib/use-debounced";
 
-export const Route = createFileRoute("/data")({
+export const Route = createFileRoute("/_authenticated/data")({
   validateSearch: (s: Record<string, unknown>): { status?: string } => ({
     ...(typeof s['status'] === "string" ? { status: s['status'] as string } : {}),
   }),
@@ -76,6 +77,7 @@ const EMPTY: Omit<DataRecord, "id" | "createdAt" | "updatedAt" | "createdBy" | "
 };
 
 function DataPage() {
+  const navigate = useNavigate();
   const state = useCrm((s) => s);
   const user = useCurrentUser();
   const hydrated = useHydrated();
@@ -159,19 +161,19 @@ function DataPage() {
   ];
 
   function saveRecord() {
-    if (!form.company.trim()) {
-      toast.error("Company name is required.");
+    if (!form.company.trim() && !form.phone.trim() && !form.whatsapp.trim() && !form.email.trim()) {
+      toast.error("Add at least a company name, phone number or email.");
       return;
     }
-    if (!editing && !form.phone && !form.email) {
-      toast.error("Add at least a phone number or an email.");
-      return;
-    }
+    const norm = (v: string) => v.replace(/\D/g, "").slice(-9);
     const duplicate = visible.find(
       (d) =>
         d.id !== editing?.id &&
-        (d.company.toLowerCase() === form.company.trim().toLowerCase() ||
-          (!!form.email && d.email.toLowerCase() === form.email.toLowerCase())),
+        ((!!form.company.trim() &&
+          d.company.toLowerCase() === form.company.trim().toLowerCase()) ||
+          (!!form.email.trim() && d.email.toLowerCase() === form.email.trim().toLowerCase()) ||
+          (!!norm(form.phone) && norm(d.phone) === norm(form.phone)) ||
+          (!!norm(form.whatsapp) && norm(d.whatsapp) === norm(form.whatsapp))),
     );
     if (duplicate && !editing) {
       toast.warning(`Possible duplicate of "${duplicate.company}" — saved anyway, please review.`);
@@ -220,47 +222,12 @@ function DataPage() {
   }
 
   function convertToLead(record: DataRecord) {
-    setState((s) => ({
-      ...s,
-      data: s.data.map((d) => (d.id === record.id ? { ...d, status: "Converted to Lead" } : d)),
-      leads: [
-        {
-          id: `L-${1000 + s.leads.length + 1}`,
-          createdAt: todayIso(),
-          company: record.company,
-          contactPerson: record.contactPerson,
-          country: record.country,
-          phone: record.phone,
-          whatsapp: record.whatsapp,
-          email: record.email,
-          source: record.source,
-          assignedTo: record.assignedTo,
-          priority: "Medium",
-          value: 0,
-          stage: "New",
-          nextFollowUp: null,
-          notes: record.notes,
-          requirement: {
-            productType: record.category,
-            shape: "",
-            caratRange: "",
-            colour: "",
-            clarity: "",
-            cut: "",
-            certification: "",
-            quantity: "",
-            targetPrice: "",
-            metalType: "",
-            jewelryType: "",
-            deadline: "",
-            instructions: "",
-          },
-        },
-        ...s.leads,
-      ],
-    }));
-    logActivity({ action: "Converted to lead", module: "Data", record: record.company });
-    toast.success("Converted to lead");
+    const existing = state.leads.find((l) => l.dataId === record.id && !l.archived);
+    if (existing) {
+      toast.info(`${record.company || record.phone} is already in Leads`);
+      return;
+    }
+    if (moveToLead(record.id)) toast.success("Added to Leads");
   }
 
   const exportRows = () =>
@@ -338,6 +305,9 @@ function DataPage() {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        <DropdownMenuItem onSelect={() => void navigate({ to: "/clients/$id", params: { id: d.id } })}>
+          Open profile & timeline
+        </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => { setEditing(d); setForm({ ...d }); setFormOpen(true); }}>
           View / Edit
         </DropdownMenuItem>
@@ -361,7 +331,7 @@ function DataPage() {
         >
           Add Follow-Up
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => convertToLead(d)}>Convert to Lead</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => convertToLead(d)}>Move to Leads</DropdownMenuItem>
         <DropdownMenuItem
           onSelect={() => {
             setState((s) => ({
@@ -728,154 +698,340 @@ function RecordDialog({
   );
 }
 
+/** Fields an imported spreadsheet column can be mapped to. */
+const FIELD_LABELS: { key: string; label: string }[] = [
+  { key: "company", label: "Company Name" },
+  { key: "contactPerson", label: "Contact Person" },
+  { key: "phone", label: "Phone" },
+  { key: "whatsapp", label: "WhatsApp" },
+  { key: "email", label: "Email" },
+  { key: "website", label: "Website" },
+  { key: "country", label: "Country" },
+  { key: "city", label: "City" },
+  { key: "source", label: "Source" },
+  { key: "productInterest", label: "Product Interest" },
+  { key: "createdAt", label: "Date Added" },
+  { key: "tags", label: "Tags" },
+  { key: "notes", label: "Notes" },
+];
+
+const ALIASES: Record<string, string[]> = {
+  company: ["company", "company name", "firm", "business", "business name"],
+  contactPerson: ["contact person", "contact", "contact name", "person", "name"],
+  phone: ["phone", "phone number", "mobile", "number", "tel", "telephone"],
+  whatsapp: ["whatsapp", "whatsapp number", "wa", "whats app"],
+  email: ["email", "e-mail", "mail", "email address"],
+  website: ["website", "web", "site", "url"],
+  country: ["country"],
+  city: ["city", "town"],
+  source: ["source", "lead source", "channel"],
+  productInterest: ["product interest", "interest", "product", "requirement"],
+  createdAt: ["date", "date added", "added date", "created", "created at"],
+  tags: ["tags", "tag", "labels"],
+  notes: ["notes", "note", "remarks", "comment", "comments"],
+};
+
+function autoMap(headers: string[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const h of headers) {
+    const clean = h.trim().toLowerCase();
+    const hit = FIELD_LABELS.find((f) => (ALIASES[f.key] ?? []).includes(clean));
+    if (hit && !Object.values(map).includes(hit.key)) map[h] = hit.key;
+  }
+  return map;
+}
+
+/** Excel serial or free text date → ISO date, blank when unusable. */
+function toIso(raw: string): string {
+  const v = raw.trim();
+  if (!v) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
+  if (/^\d{5}$/.test(v)) {
+    const d = new Date(Date.UTC(1899, 11, 30) as unknown as number);
+    d.setUTCDate(d.getUTCDate() + Number(v));
+    return d.toISOString().slice(0, 10);
+  }
+  const parsed = new Date(v);
+  return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().slice(0, 10);
+}
+
+const digits = (v: string) => v.replace(/\D/g, "").slice(-9);
+
+type DuplicateMode = "skip" | "update" | "new";
+
 interface PreviewRow {
   row: number;
   values: Record<string, string>;
   errors: string[];
+  duplicateOf?: DataRecord | undefined;
 }
 
 function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const state = useCrm((s) => s);
   const user = useCurrentUser();
-  const [rows, setRows] = useState<PreviewRow[] | null>(null);
+  const [raw, setRaw] = useState<Record<string, string>[] | null>(null);
+  const [headers, setHeaders] = useState<string[]>([]);
+  const [map, setMap] = useState<Record<string, string>>({});
+  const [step, setStep] = useState<"upload" | "map" | "preview">("upload");
+  const [mode, setMode] = useState<DuplicateMode>("skip");
   const [busy, setBusy] = useState(false);
+
+  function reset() {
+    setRaw(null);
+    setHeaders([]);
+    setMap({});
+    setStep("upload");
+  }
 
   async function handleFile(file: File) {
     setBusy(true);
     try {
       const parsed = await parseSpreadsheet(file);
-      const seen = new Set(state.data.map((d) => d.company.toLowerCase()));
-      setRows(
-        parsed.map((r, i) => {
-          const values: Record<string, string> = {
-            company: r["Company"] ?? r["company"] ?? "",
-            contactPerson: r["Contact Person"] ?? "",
-            country: r["Country"] ?? "",
-            city: r["City"] ?? "",
-            phone: r["Phone"] ?? "",
-            whatsapp: r["WhatsApp"] ?? "",
-            email: r["Email"] ?? "",
-            website: r["Website"] ?? "",
-            source: r["Source"] ?? "Import",
-            productInterest: r["Product Interest"] ?? "",
-            tags: r["Tags"] ?? "",
-            notes: r["Notes"] ?? "",
-          };
-          const errors: string[] = [];
-          if (!values["company"]) errors.push("Company is missing");
-          if (!values["phone"] && !values["email"]) errors.push("No phone or email");
-          if (values["email"] && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(values["email"]!))
-            errors.push("Invalid email");
-          if (values["company"] && seen.has(values["company"]!.toLowerCase())) errors.push("Duplicate company");
-          return { row: i + 2, values, errors };
-        }),
-      );
+      if (!parsed.length) {
+        toast.error("That file has no rows.");
+      } else {
+        const hs = Object.keys(parsed[0]!);
+        setRaw(parsed);
+        setHeaders(hs);
+        setMap(autoMap(hs));
+        setStep("map");
+      }
     } catch {
       toast.error("Could not read this file. Please use the sample template.");
     }
     setBusy(false);
   }
 
-  const valid = rows?.filter((r) => r.errors.length === 0) ?? [];
-  const invalid = rows?.filter((r) => r.errors.length > 0) ?? [];
+  const rows: PreviewRow[] = useMemo(() => {
+    if (!raw) return [];
+    const seenPhone = new Set<string>();
+    return raw.map((r, i) => {
+      const values: Record<string, string> = {};
+      for (const [header, field] of Object.entries(map)) {
+        if (!field) continue;
+        const v = String(r[header] ?? "").trim();
+        if (v) values[field] = v;
+      }
+      if (values["createdAt"]) values["createdAt"] = toIso(values["createdAt"]!);
+      const errors: string[] = [];
+      const hasAny = values["company"] || values["phone"] || values["whatsapp"] || values["email"];
+      if (!hasAny) errors.push("No company, phone or email");
+      if (values["email"] && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(values["email"]!))
+        errors.push("Invalid email");
+      const dp = digits(values["phone"] ?? "");
+      const dw = digits(values["whatsapp"] ?? "");
+      if (dp && seenPhone.has(dp)) errors.push("Repeated in this file");
+      if (dp) seenPhone.add(dp);
+      const duplicateOf = state.data.find(
+        (d) =>
+          !d.archived &&
+          ((dp && (digits(d.phone) === dp || digits(d.whatsapp) === dp)) ||
+            (dw && (digits(d.whatsapp) === dw || digits(d.phone) === dw)) ||
+            (values["email"] && d.email.toLowerCase() === values["email"]!.toLowerCase()) ||
+            (values["company"] &&
+              d.company.toLowerCase() === values["company"]!.toLowerCase())),
+      );
+      return { row: i + 2, values, errors, duplicateOf };
+    });
+  }, [raw, map, state.data]);
+
+  const usable = rows.filter((r) => !r.errors.length);
+  const invalid = rows.filter((r) => r.errors.length);
+  const dupes = usable.filter((r) => r.duplicateOf);
+  const toCreate = usable.filter((r) => !r.duplicateOf || mode === "new");
+  const toUpdate = mode === "update" ? dupes : [];
 
   function commit() {
+    const created = toCreate.map((r) => ({
+      id: uid("d"),
+      createdAt: r.values["createdAt"] || todayIso(),
+      updatedAt: todayIso(),
+      company: r.values["company"] ?? "",
+      contactPerson: r.values["contactPerson"] ?? "",
+      country: r.values["country"] ?? "",
+      city: r.values["city"] ?? "",
+      phone: r.values["phone"] ?? "",
+      whatsapp: r.values["whatsapp"] ?? "",
+      email: r.values["email"] ?? "",
+      website: r.values["website"] ?? "",
+      source: r.values["source"] ?? "Import",
+      productInterest: r.values["productInterest"] ?? "",
+      category: "Loose Diamonds",
+      assignedTo: user.id,
+      createdBy: user.id,
+      status: "New" as const,
+      tags: (r.values["tags"] ?? "").split(",").map((t) => t.trim()).filter(Boolean),
+      nextFollowUp: null,
+      notes: r.values["notes"] ?? "",
+    }));
+    const updates = new Map(toUpdate.map((r) => [r.duplicateOf!.id, r.values]));
     setState((s) => ({
       ...s,
       data: [
-        ...valid.map((r) => ({
-          id: uid("d"),
-          createdAt: todayIso(),
-          updatedAt: todayIso(),
-          company: r.values["company"]!,
-          contactPerson: r.values["contactPerson"] ?? "",
-          country: r.values["country"] ?? "",
-          city: r.values["city"] ?? "",
-          phone: r.values["phone"] ?? "",
-          whatsapp: r.values["whatsapp"] ?? "",
-          email: r.values["email"] ?? "",
-          website: r.values["website"] ?? "",
-          source: r.values["source"] ?? "Import",
-          productInterest: r.values["productInterest"] ?? "",
-          category: "Loose Diamonds",
-          assignedTo: user.id,
-          createdBy: user.id,
-          status: "New" as const,
-          tags: (r.values["tags"] ?? "").split(",").map((t) => t.trim()).filter(Boolean),
-          nextFollowUp: null,
-          notes: r.values["notes"] ?? "",
-        })),
-        ...s.data,
+        ...created,
+        ...s.data.map((d) => {
+          const patch = updates.get(d.id);
+          if (!patch) return d;
+          const merged: DataRecord = { ...d, updatedAt: todayIso() };
+          for (const [k, v] of Object.entries(patch)) {
+            if (k === "tags") merged.tags = v.split(",").map((t) => t.trim()).filter(Boolean);
+            else if (k !== "createdAt") (merged as unknown as Record<string, string>)[k] = v;
+          }
+          return merged;
+        }),
       ],
     }));
-    logActivity({ action: "Data imported", module: "Data", record: `${valid.length} records` });
-    toast.success(`${valid.length} records imported${invalid.length ? `, ${invalid.length} skipped` : ""}`);
-    setRows(null);
+    logActivity({
+      action: "Data imported",
+      module: "Data",
+      record: `${created.length} added, ${toUpdate.length} updated`,
+    });
+    toast.success(
+      `${created.length} added · ${toUpdate.length} updated · ${
+        (mode === "skip" ? dupes.length : 0) + invalid.length
+      } skipped`,
+    );
+    reset();
     onOpenChange(false);
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) setRows(null); }}>
+    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) reset(); }}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Import prospect data</DialogTitle>
+          <DialogTitle>Import data</DialogTitle>
           <DialogDescription>
-            Upload an Excel (.xlsx) or CSV file. Rows are checked before anything is saved.
+            Upload Excel (.xlsx / .xls) or CSV, match the columns, then review before anything is saved.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              type="file"
-              accept=".csv,.xlsx,.xls"
-              className="h-9 max-w-xs"
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }}
-            />
-            <Button variant="outline" size="sm" onClick={downloadTemplate}>Download sample template</Button>
+
+        {step === "upload" && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                className="h-9 max-w-xs"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }}
+              />
+              <Button variant="outline" size="sm" onClick={downloadTemplate}>
+                Download sample template
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              A file with only Phone, Date and Notes works too — full company details are optional.
+            </p>
+            {busy && <TableSkeleton rows={3} />}
           </div>
-          {busy && <TableSkeleton rows={3} />}
-          {rows && (
-            <>
-              <div className="flex flex-wrap gap-2 text-xs">
-                <span className="rounded-full bg-pastel-mint px-2 py-1">{valid.length} rows ready</span>
-                <span className="rounded-full bg-pastel-rose px-2 py-1">{invalid.length} rows with issues</span>
-              </div>
-              <div className="scroll-x max-h-72 overflow-y-auto rounded-lg border">
-                <table className="w-full min-w-[700px] text-xs">
-                  <thead className="bg-muted/60 text-left">
-                    <tr>
-                      {["Row", "Company", "Contact", "Country", "Phone", "Email", "Result"].map((h) => (
-                        <th key={h} className="p-2 font-medium">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((r) => (
-                      <tr key={r.row} className="border-t">
-                        <td className="p-2">{r.row}</td>
-                        <td className="max-w-40 truncate p-2">{r.values["company"]}</td>
-                        <td className="max-w-32 truncate p-2">{r.values["contactPerson"]}</td>
-                        <td className="p-2">{r.values["country"]}</td>
-                        <td className="p-2">{r.values["phone"]}</td>
-                        <td className="max-w-40 truncate p-2">{r.values["email"]}</td>
-                        <td className="p-2">
-                          {r.errors.length ? (
-                            <span className="text-destructive">{r.errors.join(", ")}</span>
-                          ) : (
-                            <span className="text-success">Ready</span>
-                          )}
-                        </td>
-                      </tr>
+        )}
+
+        {step === "map" && (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {raw?.length ?? 0} rows found. Check each column below — “Ignore” leaves a column out.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {headers.map((h) => (
+                <div key={h} className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-xs" title={h}>{h}</span>
+                  <select
+                    aria-label={`Map column ${h}`}
+                    className="h-9 w-40 shrink-0 rounded-lg border bg-background px-2 text-sm"
+                    value={map[h] ?? ""}
+                    onChange={(e) => setMap({ ...map, [h]: e.target.value })}
+                  >
+                    <option value="">Ignore</option>
+                    {FIELD_LABELS.map((f) => (
+                      <option key={f.key} value={f.key}>{f.label}</option>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
-        </div>
+                  </select>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {step === "preview" && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span className="rounded-full bg-pastel-mint px-2 py-1">{toCreate.length} to add</span>
+              <span className="rounded-full bg-pastel-blue px-2 py-1">{toUpdate.length} to update</span>
+              <span className="rounded-full bg-pastel-yellow px-2 py-1">{dupes.length} possible duplicates</span>
+              <span className="rounded-full bg-pastel-rose px-2 py-1">{invalid.length} with issues</span>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">When a record already exists</Label>
+              <select
+                className="h-9 w-full max-w-xs rounded-lg border bg-background px-2 text-sm"
+                value={mode}
+                onChange={(e) => setMode(e.target.value as DuplicateMode)}
+              >
+                <option value="skip">Skip duplicates</option>
+                <option value="update">Update the existing record</option>
+                <option value="new">Import as a new record</option>
+              </select>
+            </div>
+            <div className="max-h-72 overflow-auto rounded-lg border">
+              <table className="w-full min-w-[640px] text-xs">
+                <thead className="bg-muted/60 text-left">
+                  <tr>
+                    {["Row", "Company", "Phone", "Email", "Date", "Result"].map((h) => (
+                      <th key={h} className="p-2 font-medium">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.slice(0, 200).map((r) => (
+                    <tr key={r.row} className="border-t">
+                      <td className="p-2">{r.row}</td>
+                      <td className="max-w-40 truncate p-2">{r.values["company"] ?? "—"}</td>
+                      <td className="p-2">{r.values["phone"] ?? "—"}</td>
+                      <td className="max-w-40 truncate p-2">{r.values["email"] ?? "—"}</td>
+                      <td className="p-2">{r.values["createdAt"] ?? "—"}</td>
+                      <td className="p-2">
+                        {r.errors.length ? (
+                          <span className="text-destructive">{r.errors.join(", ")}</span>
+                        ) : r.duplicateOf ? (
+                          <span className="text-muted-foreground">
+                            {mode === "skip" ? "Skip" : mode === "update" ? "Update" : "Add new"} ·
+                            matches {r.duplicateOf.company || r.duplicateOf.phone}
+                          </span>
+                        ) : (
+                          <span className="text-success">Ready</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {rows.length > 200 && (
+              <p className="text-xs text-muted-foreground">
+                Showing the first 200 rows — all {rows.length} will be imported.
+              </p>
+            )}
+          </div>
+        )}
+
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button disabled={!valid.length} onClick={commit}>Import {valid.length} rows</Button>
+          {step === "map" && (
+            <>
+              <Button variant="outline" onClick={reset}>Choose another file</Button>
+              <Button onClick={() => setStep("preview")}>Preview rows</Button>
+            </>
+          )}
+          {step === "preview" && (
+            <>
+              <Button variant="outline" onClick={() => setStep("map")}>Back to columns</Button>
+              <Button
+                disabled={!toCreate.length && !toUpdate.length}
+                onClick={commit}
+              >
+                Import {toCreate.length + toUpdate.length} rows
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

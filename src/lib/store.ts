@@ -1,10 +1,35 @@
 import { useSyncExternalStore } from "react";
 import { createInitialState } from "./demo-data";
+import {
+  isUuid,
+  loadCloud,
+  primeFingerprints,
+  pushChanges,
+  writeAudit,
+} from "./cloud";
 import type { Activity, CrmState } from "./types";
 
 const KEY = "lepdo-crm-v1";
 
-let state: CrmState = createInitialState();
+function emptyState(): CrmState {
+  const base = createInitialState();
+  return {
+    ...base,
+    users: [],
+    currentUserId: "",
+    data: [],
+    followUps: [],
+    leads: [],
+    quotations: [],
+    tasks: [],
+    orders: [],
+    targets: [],
+    timeline: [],
+    activity: [],
+  };
+}
+
+let state: CrmState = emptyState();
 let hydrated = false;
 const listeners = new Set<() => void>();
 
@@ -12,70 +37,116 @@ function emit() {
   listeners.forEach((l) => l());
 }
 
-function persist() {
-  if (typeof window === "undefined") return;
+/** Records saved in this browser before the shared database existed. */
+function readLegacyLocal(): CrmState | null {
+  if (typeof window === "undefined") return null;
   try {
-    window.localStorage.setItem(KEY, JSON.stringify(state));
+    const raw = window.localStorage.getItem(KEY);
+    if (!raw) return null;
+    return { ...createInitialState(), ...(JSON.parse(raw) as CrmState) };
   } catch {
-    /* storage unavailable */
+    return null;
   }
 }
 
-export function hydrate() {
+export async function hydrate() {
   if (hydrated || typeof window === "undefined") return;
   hydrated = true;
   try {
-    const raw = window.localStorage.getItem(KEY);
-    if (raw) state = migrate({ ...createInitialState(), ...(JSON.parse(raw) as CrmState) });
-  } catch {
-    /* ignore corrupt storage */
+    const cloud = await loadCloud();
+    if (cloud) {
+      state = { ...state, ...cloud } as CrmState;
+      primeFingerprints(state);
+      await importLegacyOnce();
+    }
+  } catch (err) {
+    console.error("Could not load your workspace", err);
   }
   emit();
 }
 
 /**
- * Refreshes the linkage fields (customer ↔ lead ↔ follow-up ↔ task) on demo
- * records saved before those links existed. Real records are left untouched.
+ * The very first time an account opens the cloud workspace with an empty
+ * database, any records still sitting in this browser are uploaded so nothing
+ * the team entered before is lost.
  */
-function migrate(s: CrmState): CrmState {
-  const fresh = createInitialState();
-  const byId = <T extends { id: string }>(rows: T[]) => new Map(rows.map((r) => [r.id, r]));
-  const freshFollowUps = byId(fresh.followUps);
-  const freshLeads = byId(fresh.leads);
-  const freshTasks = byId(fresh.tasks);
-  return {
-    ...s,
-    data: s.data.map((d) => (d.demo ? { ...d, nextFollowUp: null } : d)),
-    followUps: s.followUps.map((f) =>
-      f.demo && !f.dataId ? { ...f, dataId: freshFollowUps.get(f.id)?.dataId } : f,
-    ),
-    leads: s.leads.map((l) =>
-      l.demo && !l.dataId
-        ? { ...l, dataId: freshLeads.get(l.id)?.dataId, nextFollowUp: null }
-        : l,
-    ),
-    tasks: s.tasks.map((t) => {
-      if (!t.demo || t.relatedDataId) return t;
-      const f = freshTasks.get(t.id);
-      return f ? { ...t, relatedTo: f.relatedTo, relatedDataId: f.relatedDataId } : t;
-    }),
+async function importLegacyOnce() {
+  if (state.data.length) return;
+  const legacy = readLegacyLocal();
+  if (!legacy || !legacy.data.length) return;
+  const me = state.currentUserId;
+  const ids = new Map<string, string>();
+  const id = (old?: string | null) => {
+    if (!old) return undefined;
+    if (isUuid(old)) return old;
+    if (!ids.has(old)) ids.set(old, crypto.randomUUID());
+    return ids.get(old)!;
   };
+  const imported: CrmState = {
+    ...state,
+    data: legacy.data.map((d) => ({
+      ...d,
+      id: id(d.id)!,
+      assignedTo: me,
+      createdBy: me,
+    })),
+    leads: legacy.leads.map((l) => ({
+      ...l,
+      id: id(l.id)!,
+      dataId: id(l.dataId),
+      assignedTo: me,
+    })),
+    followUps: legacy.followUps.map((f) => ({
+      ...f,
+      id: id(f.id)!,
+      dataId: id(f.dataId ?? f.relatedId),
+      leadId: id(f.leadId),
+      assignedTo: me,
+    })),
+    quotations: legacy.quotations.map((q) => ({
+      ...q,
+      id: id(q.id)!,
+      dataId: id(q.dataId),
+      leadId: id(q.leadId),
+      assignedTo: me,
+      createdBy: me,
+    })),
+    tasks: legacy.tasks.map((t) => ({
+      ...t,
+      id: id(t.id)!,
+      relatedDataId: id(t.relatedDataId),
+      assignedTo: me,
+    })),
+  };
+  // one lead per client only — the database keeps a single pipeline state
+  const seen = new Set<string>();
+  imported.leads = imported.leads.filter((l) => {
+    if (!l.dataId || seen.has(l.dataId)) return false;
+    seen.add(l.dataId);
+    return true;
+  });
+  state = imported;
+  pushChanges(state);
+  try {
+    window.localStorage.setItem(`${KEY}-imported`, new Date().toISOString());
+    window.localStorage.removeItem(KEY);
+  } catch {
+    /* storage unavailable */
+  }
 }
 
-
-export function resetDemoData() {
-  state = createInitialState();
-  persist();
-  emit();
+export async function reloadFromCloud() {
+  const cloud = await loadCloud();
+  if (cloud) {
+    state = { ...state, ...cloud } as CrmState;
+    primeFingerprints(state);
+    emit();
+  }
 }
 
 function subscribe(cb: () => void) {
   listeners.add(cb);
   return () => listeners.delete(cb);
-}
-
-function getSnapshot() {
-  return state;
 }
 
 export function useCrm<T>(selector: (s: CrmState) => T): T {
@@ -89,14 +160,14 @@ export function useCrm<T>(selector: (s: CrmState) => T): T {
 export function useHydrated() {
   return useSyncExternalStore(
     subscribe,
-    () => hydrated,
+    () => hydrated && !!state.currentUserId,
     () => false,
   );
 }
 
 export function setState(updater: (s: CrmState) => CrmState) {
   state = updater(state);
-  persist();
+  pushChanges(state);
   emit();
 }
 
@@ -104,8 +175,21 @@ export function getState() {
   return state;
 }
 
+const FALLBACK_USER = {
+  id: "",
+  name: "Loading…",
+  email: "",
+  phone: "",
+  role: "seller" as const,
+  department: "",
+  monthlyGoal: 0,
+  active: true,
+};
+
 export function useCurrentUser() {
-  return useCrm((s) => s.users.find((u) => u.id === s.currentUserId) ?? s.users[0]!);
+  return useCrm(
+    (s) => s.users.find((u) => u.id === s.currentUserId) ?? s.users[0] ?? FALLBACK_USER,
+  );
 }
 
 export function isAdmin(userId: string, s: CrmState = state) {
@@ -124,20 +208,22 @@ export function scope<T extends { assignedTo?: string; createdBy?: string; id?: 
 }
 
 export function logActivity(entry: Omit<Activity, "id" | "at" | "userId">) {
+  const userId = state.currentUserId;
+  void writeAudit(entry, userId);
   setState((s) => ({
     ...s,
     activity: [
       {
         ...entry,
-        id: `a-${Date.now()}`,
+        id: crypto.randomUUID(),
         at: new Date().toISOString().slice(0, 16).replace("T", " "),
-        userId: s.currentUserId,
+        userId,
       },
       ...s.activity,
     ].slice(0, 200),
   }));
 }
 
-export function uid(prefix: string) {
-  return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
+export function uid(_prefix?: string) {
+  return crypto.randomUUID();
 }

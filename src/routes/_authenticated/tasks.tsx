@@ -18,7 +18,7 @@ import type { Task } from "@/lib/types";
 import { useQuickAdd } from "@/lib/use-quick-add";
 import { useDebounced } from "@/lib/use-debounced";
 
-export const Route = createFileRoute("/tasks")({
+export const Route = createFileRoute("/_authenticated/tasks")({
   validateSearch: (s: Record<string, unknown>): { view?: string; status?: string } => ({
     ...(typeof s['view'] === "string" ? { view: s['view'] as string } : {}),
     ...(typeof s['status'] === "string" ? { status: s['status'] as string } : {}),

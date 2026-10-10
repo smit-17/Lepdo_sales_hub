@@ -9,6 +9,9 @@ import {
   CheckSquare,
   BarChart3,
   Shield,
+  ShoppingCart,
+  Target as TargetIcon,
+
   Bell,
   Plus,
   LogOut,
@@ -38,20 +41,25 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { useCrm, useCurrentUser, setState, hydrate } from "@/lib/store";
+import { useCrm, useCurrentUser, hydrate } from "@/lib/store";
+import { supabase } from "@/integrations/supabase/client";
+
 import { isOverdue } from "@/lib/format";
 import { requestQuickAdd, type QuickAddModule } from "@/lib/quick-add";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/data", label: "Data", icon: Database },
+  { to: "/leads", label: "Leads", icon: Sparkles },
   { to: "/follow-up", label: "Follow-Up", icon: PhoneCall },
   { to: "/quotations", label: "Quotations", icon: FileText },
-  { to: "/leads", label: "Leads", icon: Sparkles },
+  { to: "/orders", label: "Orders", icon: ShoppingCart },
+  { to: "/targets", label: "Targets", icon: TargetIcon },
   { to: "/tasks", label: "Task", icon: CheckSquare },
   { to: "/reports", label: "Report & Analysis", icon: BarChart3 },
   { to: "/admin", label: "Admin", icon: Shield, adminOnly: true },
 ] as const;
+
 
 export function Logo({ compact = false }: { compact?: boolean }) {
   return (
@@ -97,8 +105,7 @@ function NavList({ onNavigate, collapsed }: { onNavigate?: () => void; collapsed
 
 function UserFooter({ collapsed }: { collapsed?: boolean }) {
   const user = useCurrentUser();
-  const users = useCrm((s) => s.users);
-  const demoMode = useCrm((s) => s.settings.demoMode !== false);
+  const navigate = useNavigate();
   return (
     <div className="border-t p-2">
       <DropdownMenu>
@@ -116,44 +123,28 @@ function UserFooter({ collapsed }: { collapsed?: boolean }) {
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{user.name}</span>
                 <span className="block truncate text-[11px] text-muted-foreground">
-                  {user.role === "super_admin" ? "Super Admin" : "Salesperson"}
+                  {user.role === "super_admin" ? "Admin" : "Team Member"}
                 </span>
               </span>
             )}
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-56">
-          <DropdownMenuLabel>{demoMode ? "Switch demo user" : "Signed in"}</DropdownMenuLabel>
-          {!demoMode && (
-            <div className="px-2 pb-1 text-[11px] text-muted-foreground">
-              Profile switching is only available in demo mode. Accounts are managed in Admin.
-            </div>
-          )}
-          {(demoMode ? users : [])
-            .filter((u) => u.active)
-            .map((u) => (
-              <DropdownMenuItem
-                key={u.id}
-                onSelect={() => setState((s) => ({ ...s, currentUserId: u.id }))}
-              >
-                <span className="truncate">{u.name}</span>
-                <span className="ml-auto text-[11px] text-muted-foreground">
-                  {u.role === "super_admin" ? "Admin" : "Seller"}
-                </span>
-              </DropdownMenuItem>
-            ))}
-          {demoMode && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => setState((s) => ({ ...s, currentUserId: "u-admin" }))}>
-                <LogOut className="mr-2 h-4 w-4" /> Log out (demo)
-              </DropdownMenuItem>
-            </>
-          )}
+          <DropdownMenuLabel className="truncate">{user.email || "Signed in"}</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelect={async () => {
+              await supabase.auth.signOut();
+              await navigate({ to: "/auth" });
+            }}
+          >
+            <LogOut className="mr-2 h-4 w-4" /> Sign out
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
   );
+
 }
 
 function QuickAdd() {
@@ -253,8 +244,10 @@ function UniversalSearch() {
       data: f(state.data).slice(0, 30),
       leads: f(state.leads).slice(0, 30),
       quotations: f(state.quotations).slice(0, 30),
+      orders: f(state.orders.filter((o) => !o.archived)).slice(0, 30),
       tasks: f(state.tasks).slice(0, 30),
     };
+
   }, [state, admin, user.id]);
 
   useEffect(() => {
@@ -307,6 +300,21 @@ function UniversalSearch() {
               </CommandItem>
             ))}
           </CommandGroup>
+          <CommandGroup heading="Orders">
+            {results.orders.map((o) => {
+              const c = state.data.find((d) => d.id === o.clientId);
+              return (
+                <CommandItem
+                  key={o.id}
+                  value={`${o.orderNo} ${c?.company ?? ""} ${c?.phone ?? ""}`}
+                  onSelect={() => go("/orders")}
+                >
+                  {o.orderNo} · {c?.company ?? "—"}
+                </CommandItem>
+              );
+            })}
+          </CommandGroup>
+
           <CommandGroup heading="Tasks">
             {results.tasks.map((t) => (
               <CommandItem key={t.id} value={t.title} onSelect={() => go("/tasks")}>
@@ -330,7 +338,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     "Dashboard";
 
   useEffect(() => {
-    hydrate();
+    void hydrate();
   }, []);
 
   return (
@@ -400,7 +408,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="flex items-center gap-1.5">
               <span className="hidden text-right text-[11px] leading-tight text-muted-foreground lg:block">
                 <span className="block font-medium text-foreground">
-                  {user.role === "super_admin" ? "Super Admin" : "Salesperson"}
+                  {user.role === "super_admin" ? "Admin" : "Team Member"}
                 </span>
                 <WorkingDay />
               </span>

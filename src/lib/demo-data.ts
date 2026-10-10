@@ -437,6 +437,9 @@ export function createInitialState(): CrmState {
         record: "18 records",
       },
     ],
+    orders: [],
+    targets: [],
+    timeline: [],
     settings: {
       tags: ["Hot", "Nurture", "High Value", "Retailer", "Wholesaler", "Repeat"],
       sources: ["Website", "Instagram", "LinkedIn", "Alibaba", "Trade Show", "Referral"],

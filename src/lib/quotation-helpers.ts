@@ -109,6 +109,8 @@ export function blankQuotation(state: CrmState, userId: string): Quotation {
     jewelryItems: [],
     discount: 0,
     shipping: 0,
+    tax: 0,
+    otherCharges: 0,
     status: "Draft",
     invoice: null,
   };
@@ -137,6 +139,8 @@ export function normalizeQuotation(q: Quotation): Quotation {
     jewelryItems: q.jewelryItems ?? [],
     discount: q.discount ?? 0,
     shipping: q.shipping ?? 0,
+    tax: q.tax ?? 0,
+    otherCharges: q.otherCharges ?? 0,
   };
 }
 
@@ -153,6 +157,8 @@ export function validateQuotation(q: Quotation, finalize: boolean): FieldErrors 
     e["validUntil"] = "Valid-until cannot be earlier than the quotation date.";
   if (q.discount < 0) e["discount"] = "Discount cannot be negative.";
   if (q.shipping < 0) e["shipping"] = "Charges cannot be negative.";
+  if ((q.tax ?? 0) < 0) e["tax"] = "Tax cannot be negative.";
+  if ((q.otherCharges ?? 0) < 0) e["otherCharges"] = "Other charges cannot be negative.";
 
   if (q.type === "Diamond") {
     q.diamondItems.forEach((r, i) => {

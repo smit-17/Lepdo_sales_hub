@@ -63,6 +63,9 @@ export function jewelryItemTotals(item: Quotation["jewelryItems"][number]) {
 export function quotationTotals(q: Quotation) {
   const discount = n(q.discount);
   const shipping = n(q.shipping);
+  const tax = n(q.tax);
+  const other = n(q.otherCharges);
+  const extras = shipping + tax + other;
 
   // Legacy records saved before the Diamond / Jewelry rebuild.
   if (!q.type && q.items?.length) {
@@ -79,7 +82,7 @@ export function quotationTotals(q: Quotation) {
     }
     const sub = round2(subtotal - disc + tax);
     return {
-      subtotal: sub, discount: 0, shipping, total: round2(sub + shipping),
+      subtotal: sub, discount: 0, shipping, tax, otherCharges: other, total: round2(sub + extras),
       totalPieces: 0, totalCarats: 0, metalTotal: 0, diamondTotal: 0, makingTotal: 0,
     };
   }
@@ -99,7 +102,9 @@ export function quotationTotals(q: Quotation) {
       subtotal,
       discount,
       shipping,
-      total: round2(subtotal - discount + shipping),
+      tax,
+      otherCharges: other,
+      total: round2(subtotal - discount + extras),
       totalPieces: (q.jewelryItems ?? []).length,
       totalCarats: round2(totalCarats),
       metalTotal: round2(metalTotal),
@@ -114,7 +119,9 @@ export function quotationTotals(q: Quotation) {
     subtotal,
     discount,
     shipping,
-    total: round2(subtotal - discount + shipping),
+    tax,
+    otherCharges: other,
+    total: round2(subtotal - discount + extras),
     totalPieces: rows.reduce((a, r) => a + n(r.pieces), 0),
     totalCarats: round2(rows.reduce((a, r) => a + n(r.carats), 0)),
     metalTotal: 0,

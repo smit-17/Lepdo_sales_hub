@@ -21,7 +21,7 @@ import { useQuickAdd } from "@/lib/use-quick-add";
 import { useDebounced } from "@/lib/use-debounced";
 import { nextFollowUpDate } from "@/lib/links";
 
-export const Route = createFileRoute("/leads")({
+export const Route = createFileRoute("/_authenticated/leads")({
   validateSearch: (s: Record<string, unknown>): { stage?: string } => ({
     ...(typeof s['stage'] === "string" ? { stage: s['stage'] as string } : {}),
   }),
@@ -59,7 +59,7 @@ function LeadsPage() {
 
   const blank = (): Lead => ({
     id: "", createdAt: todayIso(), company: "", contactPerson: "", country: "", phone: "", whatsapp: "",
-    email: "", source: "Website", assignedTo: user.id, priority: "Medium", value: 0, stage: "New",
+    email: "", source: "Website", assignedTo: user.id, createdBy: user.id, priority: "Medium", value: 0, stage: "New",
     nextFollowUp: null, notes: "",
     requirement: { productType: "Lab-Grown Diamond", shape: "", caratRange: "", colour: "", clarity: "", cut: "", certification: "", quantity: "", targetPrice: "", metalType: "", jewelryType: "", deadline: "", instructions: "" },
   });
@@ -68,7 +68,7 @@ function LeadsPage() {
   useQuickAdd("lead", () => { setEditing(null); setForm(blank()); setOpen(true); });
 
   const visible = useMemo(
-    () => state.leads.filter((l) => !l.archived && (admin || l.assignedTo === user.id)),
+    () => state.leads.filter((l) => !l.archived && (admin || l.createdBy === user.id)),
     [state.leads, admin, user.id],
   );
 
@@ -179,7 +179,7 @@ function LeadsPage() {
                           {[l.contactPerson, l.country].filter(Boolean).join(" · ")}
                         </div>
                         <div className="truncate text-[11px] text-muted-foreground">
-                          {l.id} · {dateLabel(l.createdAt)}
+                          {l.id} · {dateLabel(l.createdAt)} · Added by {sellerName(l.createdBy ?? "")}
                         </div>
                         <div className="mt-1 line-clamp-2 text-xs break-words text-muted-foreground lg:hidden">
                           {[l.requirement.productType, l.requirement.shape, l.requirement.caratRange, l.requirement.quantity].filter(Boolean).join(" · ") || "No requirement captured"}
@@ -195,7 +195,7 @@ function LeadsPage() {
                       </td>
                       <td className="hidden min-w-0 p-2 text-xs md:table-cell">
                         <div>{dateLabel(nextFollowUpDate(state, { id: l.id, dataId: l.dataId, company: l.company, nextFollowUp: l.nextFollowUp }))}</div>
-                        <div className="truncate text-muted-foreground">{sellerName(l.assignedTo)}</div>
+                        <div className="truncate text-muted-foreground">Added by {sellerName(l.createdBy ?? "")}</div>
                       </td>
                       <td className="p-2 text-right">
                         <DropdownMenu>
@@ -294,6 +294,7 @@ function LeadsPage() {
                         <div key={l.id} className="card-soft space-y-1.5 p-2.5">
                           <div className="truncate text-sm font-medium">{l.company}</div>
                           <div className="truncate text-xs text-muted-foreground">{l.country} · {money(l.value)}</div>
+                          <div className="truncate text-[11px] text-muted-foreground">Added by {sellerName(l.createdBy ?? "")}</div>
                           <div className="flex items-center justify-between gap-1">
                             <StatusPill value={l.priority} />
                             <select

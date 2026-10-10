@@ -12,13 +12,15 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { SectionCard, EmptyState, StatusPill, TableSkeleton, Pager } from "@/components/crm/ui-bits";
-import { useCrm, useCurrentUser, useHydrated, setState, uid, logActivity, resetDemoData } from "@/lib/store";
+import { useCrm, useCurrentUser, useHydrated, setState, uid, logActivity, reloadFromCloud } from "@/lib/store";
 import { dateLabel, money } from "@/lib/format";
 import type { Role, User, Settings } from "@/lib/types";
-import lepdoaccountlogo from "@/assets/lepdoaccountlogo.png";
+import { adminCreateUser, adminSetRole } from "@/lib/admin-users.functions";
+import { saveProfile } from "@/lib/cloud";
+import defaultLogo from "@/assets/lepdo-logo.jpg.asset.json";
 import { readImageFile } from "@/lib/quotation-helpers";
 
-export const Route = createFileRoute("/admin")({
+export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({
     meta: [
       { title: "Admin — LEPDO Sales CRM" },
@@ -71,7 +73,10 @@ function UsersTab() {
     department: "", monthlyGoal: 50000, active: true,
   });
 
-  function save(user: User) {
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function save(user: User) {
     if (!user.name.trim() || !user.email.trim()) { toast.error("Name and email are required."); return; }
     if (users.some((u) => u.email.toLowerCase() === user.email.toLowerCase() && u.id !== user.id)) {
       toast.error("A user with this email already exists.");
@@ -82,13 +87,28 @@ function UsersTab() {
       users.find((u) => u.id === user.id)?.role === "super_admin" &&
       users.filter((u) => u.active && u.role === "super_admin").length <= 1;
     if (wasLastActiveAdmin && (user.role !== "super_admin" || !user.active)) {
-      toast.error("This is the last active Super Admin — keep the role and keep it active.");
+      toast.error("This is the last active Admin — keep the role and keep it active.");
       return;
     }
-    setState((s) => ({
-      ...s,
-      users: user.id ? s.users.map((u) => (u.id === user.id ? user : u)) : [...s.users, { ...user, id: uid("u") }],
-    }));
+    setBusy(true);
+    try {
+      if (!user.id) {
+        if (password.length < 8) { toast.error("Password must be at least 8 characters."); return; }
+        await adminCreateUser({ data: { name: user.name, email: user.email, password, role: user.role, phone: user.phone, department: user.department, monthlyGoal: user.monthlyGoal } });
+        await reloadFromCloud();
+      } else {
+        const prev = users.find((u) => u.id === user.id);
+        if (prev && prev.role !== user.role) await adminSetRole({ data: { userId: user.id, role: user.role } });
+        setState((s) => ({ ...s, users: s.users.map((u) => (u.id === user.id ? user : u)) }));
+        await saveProfile(user);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save user");
+      return;
+    } finally {
+      setBusy(false);
+    }
+    setPassword("");
     logActivity({ action: user.id ? "User updated" : "User created", module: "Admin", record: user.name });
     toast.success("User saved");
     setEditing(null);
@@ -98,8 +118,8 @@ function UsersTab() {
     <div className="space-y-3">
       <div className="flex flex-wrap gap-2">
         <Button size="sm" onClick={() => setEditing(blank())}><Plus className="mr-1.5 h-4 w-4" /> Add user</Button>
-        <Button size="sm" variant="outline" onClick={() => { resetDemoData(); toast.success("Demo data restored"); }}>
-          <RotateCcw className="mr-1.5 h-4 w-4" /> Reset demo data
+        <Button size="sm" variant="outline" onClick={async () => { await reloadFromCloud(); toast.success("Refreshed from the cloud"); }}>
+          <RotateCcw className="mr-1.5 h-4 w-4" /> Refresh data
         </Button>
       </div>
 
@@ -122,12 +142,12 @@ function UsersTab() {
                     <div className="truncate text-xs text-muted-foreground">{u.email}</div>
                     <div className="truncate text-xs text-muted-foreground">{u.phone}</div>
                     <div className="mt-1 flex flex-wrap gap-1 md:hidden">
-                      <StatusPill value={u.role === "super_admin" ? "Super Admin" : "Salesperson"} />
+                      <StatusPill value={u.role === "super_admin" ? "Admin" : "Team Member"} />
                       <StatusPill value={u.active ? "Active" : "Inactive"} />
                     </div>
                   </td>
                   <td className="hidden min-w-0 space-y-1 p-2 md:table-cell">
-                    <StatusPill value={u.role === "super_admin" ? "Super Admin" : "Salesperson"} />
+                    <StatusPill value={u.role === "super_admin" ? "Admin" : "Team Member"} />
                     <div className="truncate text-xs text-muted-foreground">{u.department}</div>
                     <div><StatusPill value={u.active ? "Active" : "Inactive"} /></div>
                   </td>
@@ -143,7 +163,7 @@ function UsersTab() {
                           u.role === "super_admin" &&
                           users.filter((x) => x.active && x.role === "super_admin").length <= 1;
                         if (lastAdmin) {
-                          toast.error("This is the last active Super Admin — add another one first.");
+                          toast.error("This is the last active Admin — add another one first.");
                           return;
                         }
                         setState((s) => ({ ...s, users: s.users.map((x) => (x.id === u.id ? { ...x, active: !x.active } : x)) }));
@@ -169,12 +189,15 @@ function UsersTab() {
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Full name *" value={editing.name} onChange={(v) => setEditing({ ...editing, name: v })} />
               <Field label="Email *" value={editing.email} onChange={(v) => setEditing({ ...editing, email: v })} />
+              {!editing.id && (
+                <Field label="Temporary password *" type="password" value={password} onChange={setPassword} />
+              )}
               <Field label="Phone" value={editing.phone} onChange={(v) => setEditing({ ...editing, phone: v })} />
               <div className="space-y-1">
                 <Label className="text-xs">Role</Label>
                 <select className="h-9 w-full rounded-lg border bg-background px-2 text-sm" value={editing.role} onChange={(e) => setEditing({ ...editing, role: e.target.value as Role })}>
-                  <option value="seller">Salesperson</option>
-                  <option value="super_admin">Super Admin</option>
+                  <option value="seller">Team Member</option>
+                  <option value="super_admin">Admin</option>
                 </select>
               </div>
               <Field label="Department" value={editing.department} onChange={(v) => setEditing({ ...editing, department: v })} />
@@ -186,7 +209,7 @@ function UsersTab() {
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
-              <Button onClick={() => save(editing)}>Save user</Button>
+              <Button disabled={busy} onClick={() => void save(editing)}>{busy ? "Saving…" : "Save user"}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -327,7 +350,7 @@ function SettingsTab() {
           <Label className="text-xs">Logo used on quotation and invoice PDFs</Label>
           <div className="flex flex-wrap items-center gap-3">
             <img
-              src={settings.company.logo || lepdoaccountlogo}
+              src={settings.company.logo || defaultLogo.url}
               alt="Current logo"
               className="h-12 w-auto rounded border bg-white object-contain p-1"
             />

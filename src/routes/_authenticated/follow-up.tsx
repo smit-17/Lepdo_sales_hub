@@ -29,7 +29,7 @@ import { useQuickAdd } from "@/lib/use-quick-add";
 import { useDebounced } from "@/lib/use-debounced";
 import { timezoneLabel } from "@/lib/links";
 
-export const Route = createFileRoute("/follow-up")({
+export const Route = createFileRoute("/_authenticated/follow-up")({
   validateSearch: (s: Record<string, unknown>): { quick?: string } => ({
     ...(typeof s['quick'] === "string" ? { quick: s['quick'] as string } : {}),
   }),

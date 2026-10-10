@@ -579,8 +579,18 @@ export function QuotationForm({
             <Field label={`Discount (${cur})`} error={errors["discount"]}>
               <NumberInput step="0.01" value={form.discount} onChange={(v) => set({ discount: v ?? 0 })} />
             </Field>
-            <Field label={`Shipping / other charges (${cur})`} error={errors["shipping"]}>
+            <Field label={`Shipping (${cur})`} error={errors["shipping"]}>
               <NumberInput step="0.01" value={form.shipping} onChange={(v) => set({ shipping: v ?? 0 })} />
+            </Field>
+            <Field label={`Tax (${cur}, optional)`} error={errors["tax"]}>
+              <NumberInput step="0.01" value={form.tax ?? 0} onChange={(v) => set({ tax: v ?? 0 })} />
+            </Field>
+            <Field label={`Other charges (${cur}, optional)`} error={errors["otherCharges"]}>
+              <NumberInput
+                step="0.01"
+                value={form.otherCharges ?? 0}
+                onChange={(v) => set({ otherCharges: v ?? 0 })}
+              />
             </Field>
           </div>
           {form.discount > totals.subtotal ? (

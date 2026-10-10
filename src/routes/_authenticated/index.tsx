@@ -15,7 +15,7 @@ import { StatCard, SectionCard, StatusPill, EmptyState, TableSkeleton } from "@/
 import { useCrm, useCurrentUser, useHydrated } from "@/lib/store";
 import { dateLabel, isOverdue, isToday, money, pct, quotationTotals } from "@/lib/format";
 
-export const Route = createFileRoute("/")({
+export const Route = createFileRoute("/_authenticated/")({
   head: () => ({
     meta: [
       { title: "Dashboard — LEPDO Sales CRM" },
