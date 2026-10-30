@@ -15,7 +15,7 @@ import { SectionCard, EmptyState, StatusPill, TableSkeleton, Pager } from "@/com
 import { useCrm, useCurrentUser, useHydrated, setState, uid, logActivity, reloadFromCloud } from "@/lib/store";
 import { dateLabel, money } from "@/lib/format";
 import type { Role, User, Settings } from "@/lib/types";
-import { adminCreateUser, adminSetRole } from "@/lib/admin-users.functions";
+import { adminCreateUser, adminSetRole } from "@/lib/admin-users";
 import { saveProfile } from "@/lib/cloud";
 import defaultLogo from "@/assets/lepdo-logo.jpg.asset.json";
 import { readImageFile } from "@/lib/quotation-helpers";
@@ -94,11 +94,11 @@ function UsersTab() {
     try {
       if (!user.id) {
         if (password.length < 8) { toast.error("Password must be at least 8 characters."); return; }
-        await adminCreateUser({ data: { name: user.name, email: user.email, password, role: user.role, phone: user.phone, department: user.department, monthlyGoal: user.monthlyGoal } });
+        await adminCreateUser({ name: user.name, email: user.email, password, role: user.role, phone: user.phone, department: user.department, monthlyGoal: user.monthlyGoal });
         await reloadFromCloud();
       } else {
         const prev = users.find((u) => u.id === user.id);
-        if (prev && prev.role !== user.role) await adminSetRole({ data: { userId: user.id, role: user.role } });
+        if (prev && prev.role !== user.role) await adminSetRole({ userId: user.id, role: user.role });
         setState((s) => ({ ...s, users: s.users.map((u) => (u.id === user.id ? user : u)) }));
         await saveProfile(user);
       }
