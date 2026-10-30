@@ -93,7 +93,7 @@ function UsersTab() {
     setBusy(true);
     try {
       if (!user.id) {
-        if (password.length < 8) { toast.error("Password must be at least 8 characters."); return; }
+        if (password.length < 6) { toast.error("Password must be at least 6 characters."); return; }
         await adminCreateUser({ name: user.name, email: user.email, password, role: user.role, phone: user.phone, department: user.department, monthlyGoal: user.monthlyGoal });
         await reloadFromCloud();
       } else {
